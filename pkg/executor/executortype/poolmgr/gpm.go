@@ -76,12 +76,12 @@ type (
 		enableIstio   bool
 		fetcherConfig *fetcherConfig.Config
 
-		funcInformer *k8sCache.SharedIndexInformer
-		pkgInformer  *k8sCache.SharedIndexInformer
-
 		podInformer k8sCache.SharedIndexInformer
 
 		defaultIdlePodReapTime time.Duration
+
+		poolPodC        *PoolPodController
+		specializedPodC *SpecializedPodController
 	}
 	request struct {
 		requestType
@@ -109,6 +109,20 @@ func MakeGenericPoolManager(
 
 	gpmLogger := logger.Named("generic_pool_manager")
 
+	enableIstio := false
+	if len(os.Getenv("ENABLE_ISTIO")) > 0 {
+		istio, err := strconv.ParseBool(os.Getenv("ENABLE_ISTIO"))
+		if err != nil {
+			gpmLogger.Error("failed to parse 'ENABLE_ISTIO', set to false", zap.Error(err))
+		}
+		enableIstio = istio
+	}
+
+	poolPodC := NewPoolPodController(gpmLogger, kubernetesClient, functionNamespace,
+		enableIstio, funcInformer, pkgInformer)
+
+	specializedPodC := NewSpecializedPodController(logger)
+
 	gpm := &GenericPoolManager{
 		logger:                 gpmLogger,
 		pools:                  make(map[string]*GenericPool),
@@ -122,22 +136,10 @@ func MakeGenericPoolManager(
 		requestChannel:         make(chan *request),
 		defaultIdlePodReapTime: 2 * time.Minute,
 		fetcherConfig:          fetcherConfig,
-		funcInformer:           funcInformer,
-		pkgInformer:            pkgInformer,
+		enableIstio:            enableIstio,
+		poolPodC:               poolPodC,
+		specializedPodC:        specializedPodC,
 	}
-
-	go gpm.service()
-
-	if len(os.Getenv("ENABLE_ISTIO")) > 0 {
-		istio, err := strconv.ParseBool(os.Getenv("ENABLE_ISTIO"))
-		if err != nil {
-			gpmLogger.Error("failed to parse 'ENABLE_ISTIO', set to false", zap.Error(err))
-		}
-		gpm.enableIstio = istio
-	}
-
-	(*gpm.funcInformer).AddEventHandler(gpm.FunctionEventHandlers(gpm.kubernetesClient, gpm.namespace, gpm.enableIstio))
-	(*gpm.pkgInformer).AddEventHandler(gpm.PackageEventHandlers(gpm.kubernetesClient, gpm.namespace))
 
 	kubeInformerFactory, err := utils.GetInformerFactoryByExecutor(gpm.kubernetesClient, fv1.ExecutorTypePoolmgr)
 	if err != nil {
@@ -148,10 +150,16 @@ func MakeGenericPoolManager(
 }
 
 func (gpm *GenericPoolManager) Run(ctx context.Context) {
+	// Run poolPodController
+	gpm.poolPodC.Run()
+	gpm.specializedPodC.Run()
+	go gpm.service()
 	// eagerPoolCreator must run after CleanupOldExecutorObjects.
 	// Otherwise, the poolmanager may wrongly delete the deployment.
 	go gpm.eagerPoolCreator()
 	go gpm.podInformer.Run(ctx.Done())
+	go gpm.WebsocketStartEventChecker(gpm.kubernetesClient)
+	go gpm.NoActiveConnectionEventChecker(gpm.kubernetesClient)
 	go gpm.idleObjectReaper()
 }
 
@@ -601,10 +609,6 @@ func (gpm *GenericPoolManager) getEnvPoolsize(env *fv1.Environment) int32 {
 func (gpm *GenericPoolManager) idleObjectReaper() {
 
 	pollSleep := 5 * time.Second
-
-	go gpm.WebsocketStartEventChecker(gpm.kubernetesClient)
-
-	go gpm.NoActiveConnectionEventChecker(gpm.kubernetesClient)
 
 	for {
 		time.Sleep(pollSleep)
