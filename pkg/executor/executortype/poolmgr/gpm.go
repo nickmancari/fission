@@ -46,6 +46,7 @@ import (
 	"github.com/fission/fission/pkg/executor/fscache"
 	"github.com/fission/fission/pkg/executor/reaper"
 	fetcherConfig "github.com/fission/fission/pkg/fetcher/config"
+	genInformer "github.com/fission/fission/pkg/generated/informers/externalversions"
 	"github.com/fission/fission/pkg/utils"
 )
 
@@ -95,6 +96,11 @@ type (
 	}
 )
 
+func NewEnvInformer(fissionClient *crd.FissionClient) k8sCache.SharedIndexInformer {
+	informerFactory := genInformer.NewSharedInformerFactory(fissionClient, time.Second*2)
+	return informerFactory.Core().V1().Environments().Informer()
+}
+
 func MakeGenericPoolManager(
 	logger *zap.Logger,
 	fissionClient *crd.FissionClient,
@@ -118,10 +124,12 @@ func MakeGenericPoolManager(
 		enableIstio = istio
 	}
 
-	poolPodC := NewPoolPodController(gpmLogger, kubernetesClient, functionNamespace,
-		enableIstio, funcInformer, pkgInformer)
+	envInformer := NewEnvInformer(fissionClient)
 
-	specializedPodC := NewSpecializedPodController(logger)
+	poolPodC := NewPoolPodController(gpmLogger, kubernetesClient, functionNamespace,
+		enableIstio, funcInformer, pkgInformer, &envInformer)
+
+	specializedPodC := NewSpecializedPodController(logger, &envInformer)
 
 	gpm := &GenericPoolManager{
 		logger:                 gpmLogger,
@@ -309,7 +317,7 @@ func (gpm *GenericPoolManager) AdoptExistingResources() {
 	for i := range envs.Items {
 		env := envs.Items[i]
 
-		if gpm.getEnvPoolsize(&env) > 0 {
+		if getEnvPoolsize(&env) > 0 {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
@@ -458,7 +466,7 @@ func (gpm *GenericPoolManager) service() {
 			var err error
 			pool, ok := gpm.pools[crd.CacheKey(&req.env.ObjectMeta)]
 			if !ok {
-				poolsize := gpm.getEnvPoolsize(req.env)
+				poolsize := getEnvPoolsize(req.env)
 				switch req.env.Spec.AllowedFunctionsPerContainer {
 				case fv1.AllowedFunctionsPerContainerInfinite:
 					poolsize = 1
@@ -484,7 +492,7 @@ func (gpm *GenericPoolManager) service() {
 		case CLEANUP_POOLS:
 			latestEnvPoolsize := make(map[string]int)
 			for _, env := range req.envList {
-				latestEnvPoolsize[crd.CacheKey(&env.ObjectMeta)] = int(gpm.getEnvPoolsize(&env))
+				latestEnvPoolsize[crd.CacheKey(&env.ObjectMeta)] = int(getEnvPoolsize(&env))
 			}
 			for key, pool := range gpm.pools {
 				poolsize, ok := latestEnvPoolsize[key]
@@ -576,7 +584,7 @@ func (gpm *GenericPoolManager) eagerPoolCreator() {
 		for i := range envs.Items {
 			env := envs.Items[i]
 			// Create pool only if poolsize greater than zero
-			if gpm.getEnvPoolsize(&env) > 0 {
+			if getEnvPoolsize(&env) > 0 {
 				wg.Add(1)
 				go func() {
 					defer wg.Done()
@@ -593,16 +601,6 @@ func (gpm *GenericPoolManager) eagerPoolCreator() {
 		wg.Wait()
 		time.Sleep(pollSleep)
 	}
-}
-
-func (gpm *GenericPoolManager) getEnvPoolsize(env *fv1.Environment) int32 {
-	var poolsize int32
-	if env.Spec.Version < 3 {
-		poolsize = 3
-	} else {
-		poolsize = int32(env.Spec.Poolsize)
-	}
-	return poolsize
 }
 
 // idleObjectReaper reaps objects after certain idle time

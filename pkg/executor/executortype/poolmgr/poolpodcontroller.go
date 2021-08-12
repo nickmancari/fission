@@ -29,6 +29,7 @@ type (
 		enableIstio      bool
 		funcInformer     *k8sCache.SharedIndexInformer
 		pkgInformer      *k8sCache.SharedIndexInformer
+		envInformer      *k8sCache.SharedIndexInformer
 	}
 )
 
@@ -37,18 +38,33 @@ func NewPoolPodController(logger *zap.Logger,
 	namespace string,
 	enableIstio bool,
 	funcInformer *k8sCache.SharedIndexInformer,
-	pkgInformer *k8sCache.SharedIndexInformer) *PoolPodController {
+	pkgInformer *k8sCache.SharedIndexInformer,
+	envInformer *k8sCache.SharedIndexInformer) *PoolPodController {
 	return &PoolPodController{
 		logger:           logger,
 		kubernetesClient: kubernetesClient,
 		namespace:        namespace,
 		enableIstio:      enableIstio,
 		funcInformer:     funcInformer,
-		pkgInformer:      pkgInformer}
+		pkgInformer:      pkgInformer,
+		envInformer:      envInformer,
+	}
 }
 
 func (p PoolPodController) Run() {
-	(*p.funcInformer).AddEventHandler(FunctionEventHandlers(p.logger, p.kubernetesClient, p.namespace, p.enableIstio))
-	(*p.pkgInformer).AddEventHandler(PackageEventHandlers(p.logger, p.kubernetesClient, p.namespace))
+	(*p.funcInformer).AddEventHandler(PoolPodFunctionEventHandlers(p.logger, p.kubernetesClient, p.namespace, p.enableIstio))
+	(*p.pkgInformer).AddEventHandler(PoolPodPackageEventHandlers(p.logger, p.kubernetesClient, p.namespace))
+	(*p.envInformer).AddEventHandler(NewPoolPodEnvInformerHandlers())
 	p.logger.Info("pool pod controller started")
+}
+
+func NewPoolPodEnvInformerHandlers() k8sCache.ResourceEventHandlerFuncs {
+	return k8sCache.ResourceEventHandlerFuncs{
+		AddFunc: func(obj interface{}) {
+		},
+		DeleteFunc: func(obj interface{}) {
+		},
+		UpdateFunc: func(oldObj, newObj interface{}) {
+		},
+	}
 }

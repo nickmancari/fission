@@ -26,7 +26,7 @@ import (
 	"github.com/fission/fission/pkg/utils"
 )
 
-func PackageEventHandlers(logger *zap.Logger, kubernetesClient *kubernetes.Clientset, fissionfnNamespace string) k8sCache.ResourceEventHandlerFuncs {
+func PoolPodPackageEventHandlers(logger *zap.Logger, kubernetesClient *kubernetes.Clientset, fissionfnNamespace string) k8sCache.ResourceEventHandlerFuncs {
 	return k8sCache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			pkg := obj.(*fv1.Package)

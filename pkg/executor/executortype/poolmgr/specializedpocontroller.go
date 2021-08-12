@@ -15,20 +15,37 @@ limitations under the License.
 */
 package poolmgr
 
-import "go.uber.org/zap"
+import (
+	"go.uber.org/zap"
+	k8sCache "k8s.io/client-go/tools/cache"
+)
 
 type (
 	SpecializedPodController struct {
-		logger *zap.Logger
+		logger      *zap.Logger
+		envInformer *k8sCache.SharedIndexInformer
 	}
 )
 
-func NewSpecializedPodController(logger *zap.Logger) *SpecializedPodController {
+func NewSpecializedPodController(logger *zap.Logger, envInformer *k8sCache.SharedIndexInformer) *SpecializedPodController {
 	return &SpecializedPodController{
-		logger: logger,
+		logger:      logger,
+		envInformer: envInformer,
 	}
 }
 
 func (spc *SpecializedPodController) Run() {
+	(*spc.envInformer).AddEventHandler(NewSpeciaizedPodEnvInformerHandlers())
 	spc.logger.Info("specialized pod controller started")
+}
+
+func NewSpeciaizedPodEnvInformerHandlers() k8sCache.ResourceEventHandlerFuncs {
+	return k8sCache.ResourceEventHandlerFuncs{
+		AddFunc: func(obj interface{}) {
+		},
+		DeleteFunc: func(obj interface{}) {
+		},
+		UpdateFunc: func(oldObj, newObj interface{}) {
+		},
+	}
 }

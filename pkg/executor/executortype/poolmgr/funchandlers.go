@@ -37,7 +37,7 @@ func getIstioServiceLabels(fnName string) map[string]string {
 	}
 }
 
-func FunctionEventHandlers(logger *zap.Logger, kubernetesClient *kubernetes.Clientset, fissionfnNamespace string, istioEnabled bool) k8sCache.ResourceEventHandlerFuncs {
+func PoolPodFunctionEventHandlers(logger *zap.Logger, kubernetesClient *kubernetes.Clientset, fissionfnNamespace string, istioEnabled bool) k8sCache.ResourceEventHandlerFuncs {
 	return k8sCache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			fn := obj.(*fv1.Function)
