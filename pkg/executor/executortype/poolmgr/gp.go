@@ -56,7 +56,6 @@ type (
 	GenericPool struct {
 		logger                   *zap.Logger
 		env                      *fv1.Environment
-		replicas                 int32                         // num idle pods
 		deployment               *appsv1.Deployment            // kubernetes deployment
 		namespace                string                        // namespace to keep our resources
 		functionNamespace        string                        // fallback namespace for fission functions
@@ -86,7 +85,6 @@ func MakeGenericPool(
 	kubernetesClient *kubernetes.Clientset,
 	metricsClient *metricsclient.Clientset,
 	env *fv1.Environment,
-	initialReplicas int32,
 	namespace string,
 	functionNamespace string,
 	fsCache *fscache.FunctionServiceCache,
@@ -113,7 +111,6 @@ func MakeGenericPool(
 	gp := &GenericPool{
 		logger:                   gpLogger,
 		env:                      env,
-		replicas:                 initialReplicas, // TODO make this an env param instead?
 		fissionClient:            fissionClient,
 		kubernetesClient:         kubernetesClient,
 		metricsClient:            metricsClient,

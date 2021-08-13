@@ -16,6 +16,8 @@ limitations under the License.
 package poolmgr
 
 import (
+	"context"
+
 	"go.uber.org/zap"
 	"k8s.io/client-go/kubernetes"
 	k8sCache "k8s.io/client-go/tools/cache"
@@ -79,7 +81,10 @@ func NewPoolPodEnvInformerHandlers(logger *zap.Logger, gpm *GenericPoolManager) 
 				logger.Info("Created pool for the environment", zap.Any("env", env))
 				return
 			}
-			logger.Info("might need update for pool here", zap.Any("pool", pool))
+			err = pool.updatePoolDeployment(context.Background(), env)
+			if err != nil {
+				logger.Error("error updating pool", zap.Error(err))
+			}
 		},
 		DeleteFunc: func(obj interface{}) {
 			env := obj.(*fv1.Environment)
@@ -107,7 +112,10 @@ func NewPoolPodEnvInformerHandlers(logger *zap.Logger, gpm *GenericPoolManager) 
 				logger.Info("Created pool for the environment", zap.Any("env", newEnv))
 				return
 			}
-			logger.Info("might need update for pool here", zap.Any("pool", pool))
+			err = pool.updatePoolDeployment(context.Background(), newEnv)
+			if err != nil {
+				logger.Error("error updating pool", zap.Error(err))
+			}
 		},
 	}
 }

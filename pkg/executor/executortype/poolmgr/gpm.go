@@ -461,11 +461,6 @@ func (gpm *GenericPoolManager) service() {
 			created := false
 			pool, ok := gpm.pools[crd.CacheKeyUID(&req.env.ObjectMeta)]
 			if !ok {
-				poolsize := getEnvPoolsize(req.env)
-				switch req.env.Spec.AllowedFunctionsPerContainer {
-				case fv1.AllowedFunctionsPerContainerInfinite:
-					poolsize = 1
-				}
 
 				// To support backward compatibility, if envs are created in default ns, we go ahead
 				// and create pools in fission-function ns as earlier.
@@ -475,7 +470,7 @@ func (gpm *GenericPoolManager) service() {
 				}
 
 				pool, err = MakeGenericPool(gpm.logger,
-					gpm.fissionClient, gpm.kubernetesClient, gpm.metricsClient, req.env, poolsize,
+					gpm.fissionClient, gpm.kubernetesClient, gpm.metricsClient, req.env,
 					ns, gpm.namespace, gpm.fsCache, gpm.fetcherConfig, gpm.instanceID, gpm.enableIstio)
 				if err != nil {
 					req.responseChannel <- &response{error: err}

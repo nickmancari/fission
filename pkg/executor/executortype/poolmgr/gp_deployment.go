@@ -134,9 +134,15 @@ func (gp *GenericPool) genDeploymentSpec(env *fv1.Environment) (*appsv1.Deployme
 
 	pod.Spec = *(util.ApplyImagePullSecret(env.Spec.ImagePullSecret, pod.Spec))
 
+	poolsize := getEnvPoolsize(env)
+	switch env.Spec.AllowedFunctionsPerContainer {
+	case fv1.AllowedFunctionsPerContainerInfinite:
+		poolsize = 1
+	}
+
 	deploymentSpec := appsv1.DeploymentSpec{
 		// TODO: fix this hardcoded value
-		Replicas: &gp.replicas,
+		Replicas: &poolsize,
 		Selector: &metav1.LabelSelector{
 			MatchLabels: deployLabels,
 		},
@@ -192,6 +198,42 @@ func (gp *GenericPool) createPoolDeployment(ctx context.Context, env *fv1.Enviro
 		return err
 	}
 
+	gp.deployment = depl
+	return nil
+}
+
+func (gp *GenericPool) updatePoolDeployment(ctx context.Context, env *fv1.Environment) error {
+	if gp.env.ObjectMeta.ResourceVersion == env.ObjectMeta.ResourceVersion {
+		gp.logger.Debug("env resource version matching with pool env", zap.String("env", gp.env.ObjectMeta.Name))
+		return nil
+	}
+	newDeployment := gp.deployment.DeepCopy()
+	spec, err := gp.genDeploymentSpec(env)
+	if err != nil {
+		gp.logger.Error("error generating deployment spec", zap.Error(err))
+		return err
+	}
+	newDeployment.Spec = *spec
+	deployMeta := gp.genDeploymentMeta(env)
+	deployMeta.Name = gp.deployment.Name
+	newDeployment.ObjectMeta = deployMeta
+
+	poolsize := getEnvPoolsize(env)
+	switch env.Spec.AllowedFunctionsPerContainer {
+	case fv1.AllowedFunctionsPerContainerInfinite:
+		poolsize = 1
+	}
+	newDeployment.Spec.Replicas = &poolsize
+
+	depl, err := gp.kubernetesClient.AppsV1().Deployments(gp.namespace).Update(ctx, newDeployment, metav1.UpdateOptions{})
+	if err != nil {
+		gp.logger.Error("error updating deployment in kubernetes", zap.Error(err), zap.String("deployment", gp.deployment.Name))
+		return err
+	}
+	// possible concurrency issue here as
+	// gp.env and gp.deployment referenced at few places
+	// we can move update pool to gpm.service if required
+	gp.env = env
 	gp.deployment = depl
 	return nil
 }
