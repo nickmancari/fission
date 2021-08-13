@@ -275,7 +275,7 @@ func StartExecutor(logger *zap.Logger, functionNamespace string, envBuilderNames
 
 	logger.Info("Starting executor", zap.String("instanceID", executorInstanceID))
 
-	informerFactory := genInformer.NewSharedInformerFactory(fissionClient, time.Second*30)
+	informerFactory := genInformer.NewSharedInformerFactory(fissionClient, time.Minute*10)
 	funcInformer := informerFactory.Core().V1().Functions().Informer()
 	pkgInformer := informerFactory.Core().V1().Packages().Informer()
 	envInformer := informerFactory.Core().V1().Environments().Informer()
@@ -284,7 +284,7 @@ func StartExecutor(logger *zap.Logger, functionNamespace string, envBuilderNames
 		logger,
 		fissionClient, kubernetesClient, metricsClient,
 		functionNamespace, fetcherConfig, executorInstanceID,
-		&funcInformer, &pkgInformer,
+		&funcInformer, &pkgInformer, &envInformer,
 	)
 	if err != nil {
 		return errors.Wrap(err, "pool manager creation faied")

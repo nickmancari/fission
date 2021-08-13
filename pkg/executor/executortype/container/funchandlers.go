@@ -63,6 +63,9 @@ func (caaf *Container) FuncInformerHandler() k8sCache.ResourceEventHandlerFuncs 
 		UpdateFunc: func(oldObj interface{}, newObj interface{}) {
 			oldFn := oldObj.(*fv1.Function)
 			newFn := newObj.(*fv1.Function)
+			if oldFn.ObjectMeta.ResourceVersion == newFn.ObjectMeta.ResourceVersion {
+				return
+			}
 			fnExecutorType := oldFn.Spec.InvokeStrategy.ExecutionStrategy.ExecutorType
 			if fnExecutorType != "" && fnExecutorType != fv1.ExecutorTypeContainer {
 				return
@@ -78,7 +81,6 @@ func (caaf *Container) FuncInformerHandler() k8sCache.ResourceEventHandlerFuncs 
 						zap.Error(err))
 				}
 				log.Debug("end function update handler")
-
 			}()
 		},
 	}

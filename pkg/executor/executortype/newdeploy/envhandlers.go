@@ -32,6 +32,9 @@ func (deploy *NewDeploy) EnvEventHandlers() k8sCache.ResourceEventHandlerFuncs {
 		UpdateFunc: func(oldObj interface{}, newObj interface{}) {
 			newEnv := newObj.(*fv1.Environment)
 			oldEnv := oldObj.(*fv1.Environment)
+			if oldEnv.ObjectMeta.ResourceVersion == newEnv.ObjectMeta.ResourceVersion {
+				return
+			}
 			// Currently only an image update in environment calls for function's deployment recreation. In future there might be more attributes which would want to do it
 			if oldEnv.Spec.Runtime.Image != newEnv.Spec.Runtime.Image {
 				deploy.logger.Debug("Updating all function of the environment that changed, old env:", zap.Any("environment", oldEnv))

@@ -54,6 +54,9 @@ func (deploy *NewDeploy) FunctionEventHandlers() k8sCache.ResourceEventHandlerFu
 		UpdateFunc: func(oldObj interface{}, newObj interface{}) {
 			oldFn := oldObj.(*fv1.Function)
 			newFn := newObj.(*fv1.Function)
+			if oldFn.ObjectMeta.ResourceVersion == newFn.ObjectMeta.ResourceVersion {
+				return
+			}
 			go func() {
 				err := deploy.updateFunction(oldFn, newFn)
 				if err != nil {

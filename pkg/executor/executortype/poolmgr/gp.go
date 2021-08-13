@@ -32,7 +32,6 @@ import (
 	"go.uber.org/zap"
 	appsv1 "k8s.io/api/apps/v1"
 	apiv1 "k8s.io/api/core/v1"
-	k8sErrs "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -46,7 +45,6 @@ import (
 	fv1 "github.com/fission/fission/pkg/apis/core/v1"
 	"github.com/fission/fission/pkg/crd"
 	"github.com/fission/fission/pkg/executor/fscache"
-	"github.com/fission/fission/pkg/executor/util"
 	fetcherClient "github.com/fission/fission/pkg/fetcher/client"
 	fetcherConfig "github.com/fission/fission/pkg/fetcher/config"
 	"github.com/fission/fission/pkg/utils"
@@ -144,7 +142,7 @@ func MakeGenericPool(
 	//gp.labelsForPool = gp.getDeployLabels()
 
 	// create the pool
-	err = gp.createPool()
+	err = gp.createPoolDeployment(context.Background(), env)
 	if err != nil {
 		return nil, err
 	}
@@ -155,18 +153,18 @@ func MakeGenericPool(
 	return gp, nil
 }
 
-func (gp *GenericPool) getEnvironmentPoolLabels() map[string]string {
-	envLabels := maps.CopyStringMap(gp.env.ObjectMeta.Labels)
+func (gp *GenericPool) getEnvironmentPoolLabels(env *fv1.Environment) map[string]string {
+	envLabels := maps.CopyStringMap(env.ObjectMeta.Labels)
 	envLabels[fv1.EXECUTOR_TYPE] = string(fv1.ExecutorTypePoolmgr)
-	envLabels[fv1.ENVIRONMENT_NAME] = gp.env.ObjectMeta.Name
-	envLabels[fv1.ENVIRONMENT_NAMESPACE] = gp.env.ObjectMeta.Namespace
-	envLabels[fv1.ENVIRONMENT_UID] = string(gp.env.ObjectMeta.UID)
+	envLabels[fv1.ENVIRONMENT_NAME] = env.ObjectMeta.Name
+	envLabels[fv1.ENVIRONMENT_NAMESPACE] = env.ObjectMeta.Namespace
+	envLabels[fv1.ENVIRONMENT_UID] = string(env.ObjectMeta.UID)
 	envLabels["managed"] = "true" // this allows us to easily find pods managed by the deployment
 	return envLabels
 }
 
-func (gp *GenericPool) getDeployAnnotations() map[string]string {
-	deployAnnotations := maps.CopyStringMap(gp.env.Annotations)
+func (gp *GenericPool) getDeployAnnotations(env *fv1.Environment) map[string]string {
+	deployAnnotations := maps.CopyStringMap(env.Annotations)
 	deployAnnotations[fv1.EXECUTOR_INSTANCEID_LABEL] = gp.instanceID
 	return deployAnnotations
 }
@@ -277,7 +275,7 @@ func (gp *GenericPool) choosePod(newLabels map[string]string) (string, *apiv1.Po
 
 			// Append executor instance id to pod annotations to
 			// indicate this pod is managed by this executor.
-			annotations := gp.getDeployAnnotations()
+			annotations := gp.getDeployAnnotations(gp.env)
 			annotationPatch, _ := json.Marshal(annotations)
 
 			patch := fmt.Sprintf(`{"metadata":{"annotations":%v, "labels":%v}}`, string(annotationPatch), string(labelPatch))
@@ -316,7 +314,7 @@ func (gp *GenericPool) choosePod(newLabels map[string]string) (string, *apiv1.Po
 }
 
 func (gp *GenericPool) labelsForFunction(metadata *metav1.ObjectMeta) map[string]string {
-	label := gp.getEnvironmentPoolLabels()
+	label := gp.getEnvironmentPoolLabels(gp.env)
 	label[fv1.FUNCTION_NAME] = metadata.Name
 	label[fv1.FUNCTION_UID] = string(metadata.UID)
 	label[fv1.FUNCTION_NAMESPACE] = metadata.Namespace // function CRD must stay within same namespace of environment CRD
@@ -399,156 +397,6 @@ func (gp *GenericPool) specializePod(ctx context.Context, pod *apiv1.Pod, fn *fv
 		return err
 	}
 
-	return nil
-}
-
-// getPoolName returns a unique name of an environment
-func (gp *GenericPool) getPoolName() string {
-	return strings.ToLower(fmt.Sprintf("poolmgr-%v-%v-%v", gp.env.ObjectMeta.Name, gp.env.ObjectMeta.Namespace, gp.env.ObjectMeta.ResourceVersion))
-}
-
-// A pool is a deployment of generic containers for an env.  This
-// creates the pool but doesn't wait for any pods to be ready.
-func (gp *GenericPool) createPool() error {
-	deployLabels := gp.getEnvironmentPoolLabels()
-	deployAnnotations := gp.getDeployAnnotations()
-
-	// Use long terminationGracePeriodSeconds for connection draining in case that
-	// pod still runs user functions.
-	gracePeriodSeconds := int64(6 * 60)
-	if gp.env.Spec.TerminationGracePeriod > 0 {
-		gracePeriodSeconds = gp.env.Spec.TerminationGracePeriod
-	}
-
-	podAnnotations := gp.env.ObjectMeta.Annotations
-	if podAnnotations == nil {
-		podAnnotations = make(map[string]string)
-	}
-
-	// Here, we don't append executor instance-id to pod annotations
-	// to prevent unwanted rolling updates occur. Pool manager will
-	// append executor instance-id to pod annotations when a pod is chosen
-	// for function specialization.
-
-	if gp.useIstio && gp.env.Spec.AllowAccessToExternalNetwork {
-		podAnnotations["sidecar.istio.io/inject"] = "false"
-	}
-
-	podLabels := gp.env.ObjectMeta.Labels
-	if podLabels == nil {
-		podLabels = make(map[string]string)
-	}
-
-	for k, v := range deployLabels {
-		podLabels[k] = v
-	}
-
-	container, err := util.MergeContainer(&apiv1.Container{
-		Name:                   gp.env.ObjectMeta.Name,
-		Image:                  gp.env.Spec.Runtime.Image,
-		ImagePullPolicy:        gp.runtimeImagePullPolicy,
-		TerminationMessagePath: "/dev/termination-log",
-		Resources:              gp.env.Spec.Resources,
-		// Pod is removed from endpoints list for service when it's
-		// state became "Termination". We used preStop hook as the
-		// workaround for connection draining since pod maybe shutdown
-		// before grace period expires.
-		// https://kubernetes.io/docs/concepts/workloads/pods/pod/#termination-of-pods
-		// https://github.com/kubernetes/kubernetes/issues/47576#issuecomment-308900172
-		Lifecycle: &apiv1.Lifecycle{
-			PreStop: &apiv1.Handler{
-				Exec: &apiv1.ExecAction{
-					Command: []string{
-						"/bin/sleep",
-						fmt.Sprintf("%v", gracePeriodSeconds),
-					},
-				},
-			},
-		},
-		// https://istio.io/docs/setup/kubernetes/additional-setup/requirements/
-		Ports: []apiv1.ContainerPort{
-			{
-				Name:          "http-fetcher",
-				ContainerPort: int32(8000),
-			},
-			{
-				Name:          "http-env",
-				ContainerPort: int32(8888),
-			},
-		},
-	}, gp.env.Spec.Runtime.Container)
-	if err != nil {
-		return err
-	}
-
-	pod := apiv1.PodTemplateSpec{
-		ObjectMeta: metav1.ObjectMeta{
-			Labels:      podLabels,
-			Annotations: podAnnotations,
-		},
-		Spec: apiv1.PodSpec{
-			Containers:         []apiv1.Container{*container},
-			ServiceAccountName: "fission-fetcher",
-			// TerminationGracePeriodSeconds should be equal to the
-			// sleep time of preStop to make sure that SIGTERM is sent
-			// to pod after 6 mins.
-			TerminationGracePeriodSeconds: &gracePeriodSeconds,
-		},
-	}
-
-	pod.Spec = *(util.ApplyImagePullSecret(gp.env.Spec.ImagePullSecret, pod.Spec))
-
-	deployment := &appsv1.Deployment{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:        gp.getPoolName(),
-			Labels:      deployLabels,
-			Annotations: deployAnnotations,
-		},
-		Spec: appsv1.DeploymentSpec{
-			Replicas: &gp.replicas,
-			Selector: &metav1.LabelSelector{
-				MatchLabels: deployLabels,
-			},
-			Template: pod,
-		},
-	}
-
-	// Order of merging is important here - first fetcher, then containers and lastly pod spec
-	err = gp.fetcherConfig.AddFetcherToPodSpec(&deployment.Spec.Template.Spec, gp.env.ObjectMeta.Name)
-	if err != nil {
-		return err
-	}
-
-	if gp.env.Spec.Runtime.PodSpec != nil {
-		newPodSpec, err := util.MergePodSpec(&deployment.Spec.Template.Spec, gp.env.Spec.Runtime.PodSpec)
-		if err != nil {
-			return err
-		}
-		deployment.Spec.Template.Spec = *newPodSpec
-	}
-
-	depl, err := gp.kubernetesClient.AppsV1().Deployments(gp.namespace).Get(context.TODO(), deployment.Name, metav1.GetOptions{})
-	if err == nil {
-		if depl.Annotations[fv1.EXECUTOR_INSTANCEID_LABEL] != gp.instanceID {
-			deployment.Annotations[fv1.EXECUTOR_INSTANCEID_LABEL] = gp.instanceID
-			// Update with the latest deployment spec. Kubernetes will trigger
-			// rolling update if spec is different from the one in the cluster.
-			depl, err = gp.kubernetesClient.AppsV1().Deployments(gp.namespace).Update(context.TODO(), deployment, metav1.UpdateOptions{})
-		}
-		gp.deployment = depl
-		return err
-	} else if !k8sErrs.IsNotFound(err) {
-		gp.logger.Error("error getting deployment in kubernetes", zap.Error(err), zap.String("deployment", deployment.Name))
-		return err
-	}
-
-	depl, err = gp.kubernetesClient.AppsV1().Deployments(gp.namespace).Create(context.TODO(), deployment, metav1.CreateOptions{})
-	if err != nil {
-		gp.logger.Error("error creating deployment in kubernetes", zap.Error(err), zap.String("deployment", deployment.Name))
-		return err
-	}
-
-	gp.deployment = depl
 	return nil
 }
 
