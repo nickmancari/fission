@@ -18,6 +18,8 @@ package poolmgr
 import (
 	"go.uber.org/zap"
 	k8sCache "k8s.io/client-go/tools/cache"
+
+	fv1 "github.com/fission/fission/pkg/apis/core/v1"
 )
 
 type (
@@ -35,17 +37,27 @@ func NewSpecializedPodController(logger *zap.Logger, envInformer *k8sCache.Share
 }
 
 func (spc *SpecializedPodController) Run() {
-	(*spc.envInformer).AddEventHandler(NewSpeciaizedPodEnvInformerHandlers())
+	(*spc.envInformer).AddEventHandler(NewSpeciaizedPodEnvInformerHandlers(spc.logger))
 	spc.logger.Info("specialized pod controller started")
 }
 
-func NewSpeciaizedPodEnvInformerHandlers() k8sCache.ResourceEventHandlerFuncs {
+func NewSpeciaizedPodEnvInformerHandlers(logger *zap.Logger) k8sCache.ResourceEventHandlerFuncs {
 	return k8sCache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
+			env := obj.(*fv1.Environment)
+			logger.Debug("environment create", zap.Any("env", env))
 		},
 		DeleteFunc: func(obj interface{}) {
+			env := obj.(*fv1.Environment)
+			logger.Debug("environment delete", zap.Any("env", env))
 		},
 		UpdateFunc: func(oldObj, newObj interface{}) {
+			oldEnv := oldObj.(*fv1.Environment)
+			newEnv := newObj.(*fv1.Environment)
+			if oldEnv.ObjectMeta.ResourceVersion == newEnv.ObjectMeta.ResourceVersion {
+				return
+			}
+			logger.Debug("environment update", zap.Any("oldEnv", oldEnv), zap.Any("newEnv", newEnv))
 		},
 	}
 }
