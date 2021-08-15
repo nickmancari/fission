@@ -59,14 +59,15 @@ func (p PoolPodController) Run(gpm *GenericPoolManager) {
 	(*p.funcInformer).AddEventHandler(PoolPodFunctionEventHandlers(p.logger, p.kubernetesClient, p.namespace, p.enableIstio))
 	(*p.pkgInformer).AddEventHandler(PoolPodPackageEventHandlers(p.logger, p.kubernetesClient, p.namespace))
 	(*p.envInformer).AddEventHandler(NewPoolPodEnvInformerHandlers(p.logger, gpm))
-	p.logger.Info("pool pod controller started")
+	p.logger.Info("pool pod controller handlers registered")
 }
 
 func NewPoolPodEnvInformerHandlers(logger *zap.Logger, gpm *GenericPoolManager) k8sCache.ResourceEventHandlerFuncs {
 	return k8sCache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			env := obj.(*fv1.Environment)
-			logger.Debug("environment create", zap.Any("env", env))
+			logger = logger.With(zap.String("env", env.Name), zap.String("namespace", env.Namespace))
+			logger.Debug("environment created")
 			poolsize := getEnvPoolsize(env)
 			if poolsize == 0 {
 				logger.Info("pool size is zero")
@@ -78,16 +79,18 @@ func NewPoolPodEnvInformerHandlers(logger *zap.Logger, gpm *GenericPoolManager) 
 				return
 			}
 			if created {
-				logger.Info("Created pool for the environment", zap.Any("env", env))
+				logger.Info("created pool for the environment")
 				return
 			}
 			err = pool.updatePoolDeployment(context.Background(), env)
 			if err != nil {
 				logger.Error("error updating pool", zap.Error(err))
 			}
+			logger.Info("Updated deployment for pool")
 		},
 		DeleteFunc: func(obj interface{}) {
 			env := obj.(*fv1.Environment)
+			logger = logger.With(zap.String("env", env.Name), zap.String("namespace", env.Namespace))
 			logger.Debug("environment delete", zap.Any("env", env))
 			gpm.cleanupPool(env)
 		},
@@ -97,7 +100,8 @@ func NewPoolPodEnvInformerHandlers(logger *zap.Logger, gpm *GenericPoolManager) 
 			if oldEnv.ObjectMeta.ResourceVersion == newEnv.ObjectMeta.ResourceVersion {
 				return
 			}
-			logger.Debug("environment update", zap.Any("oldEnv", oldEnv), zap.Any("newEnv", newEnv))
+			logger = logger.With(zap.String("env", oldEnv.Name), zap.String("namespace", oldEnv.Namespace))
+			logger.Debug("environment update")
 			poolsize := getEnvPoolsize(newEnv)
 			if poolsize == 0 {
 				gpm.cleanupPool(newEnv)
@@ -109,13 +113,15 @@ func NewPoolPodEnvInformerHandlers(logger *zap.Logger, gpm *GenericPoolManager) 
 				return
 			}
 			if created {
-				logger.Info("Created pool for the environment", zap.Any("env", newEnv))
+				logger.Info("created pool for the environment", zap.Any("env", newEnv))
 				return
 			}
 			err = pool.updatePoolDeployment(context.Background(), newEnv)
 			if err != nil {
 				logger.Error("error updating pool", zap.Error(err))
 			}
+			logger.Info("Updated deployment for pool")
+
 		},
 	}
 }

@@ -420,7 +420,9 @@ func (gp *GenericPool) createSvc(name string, labels map[string]string) (*apiv1.
 }
 
 func (gp *GenericPool) getFuncSvc(ctx context.Context, fn *fv1.Function) (*fscache.FuncSvc, error) {
-	gp.logger.Info("choosing pod from pool", zap.Any("function", fn.ObjectMeta))
+	logger := gp.logger.With(zap.String("function", fn.ObjectMeta.Name), zap.String("functionNamespace", fn.ObjectMeta.Namespace))
+
+	logger.Info("choosing pod from pool")
 	funcLabels := gp.labelsForFunction(&fn.ObjectMeta)
 
 	if gp.useIstio {
@@ -474,7 +476,8 @@ func (gp *GenericPool) getFuncSvc(ctx context.Context, fn *fv1.Function) (*fscac
 		gp.scheduleDeletePod(pod.ObjectMeta.Name)
 		return nil, err
 	}
-	gp.logger.Info("specialized pod", zap.String("pod", pod.ObjectMeta.Name), zap.Any("function", fn.ObjectMeta))
+	logger.Info("specialized pod", zap.String("pod", pod.ObjectMeta.Name),
+		zap.String("podNamespace", pod.ObjectMeta.Namespace), zap.String("podIP", pod.Status.PodIP))
 
 	var svcHost string
 	if gp.useSvc && !gp.useIstio {
@@ -509,18 +512,11 @@ func (gp *GenericPool) getFuncSvc(ctx context.Context, fn *fv1.Function) (*fscac
 	p, err := gp.kubernetesClient.CoreV1().Pods(pod.Namespace).Patch(context.TODO(), pod.Name, k8sTypes.StrategicMergePatchType, []byte(patch), metav1.PatchOptions{})
 	if err != nil {
 		// just log the error since it won't affect the function serving
-		gp.logger.Warn("error patching svc-host to pod", zap.Error(err),
+		logger.Warn("error patching svc-host to pod", zap.Error(err),
 			zap.String("pod", pod.Name), zap.String("ns", pod.Namespace))
 	} else {
 		pod = p
 	}
-
-	gp.logger.Info("specialized pod",
-		zap.String("pod", pod.ObjectMeta.Name),
-		zap.String("podNamespace", pod.ObjectMeta.Namespace),
-		zap.String("function", fn.ObjectMeta.Name),
-		zap.String("functionNamespace", fn.ObjectMeta.Namespace),
-		zap.String("specialization_host", svcHost))
 
 	kubeObjRefs := []apiv1.ObjectReference{
 		{
@@ -564,6 +560,12 @@ func (gp *GenericPool) getFuncSvc(ctx context.Context, fn *fv1.Function) (*fscac
 	gp.fsCache.AddFunc(*fsvc)
 
 	gp.fsCache.IncreaseColdStarts(fn.ObjectMeta.Name, string(fn.ObjectMeta.UID))
+
+	logger.Info("added function service",
+		zap.String("pod", pod.ObjectMeta.Name),
+		zap.String("podNamespace", pod.ObjectMeta.Namespace),
+		zap.String("serviceHost", svcHost),
+		zap.String("podIP", pod.Status.PodIP))
 
 	return fsvc, nil
 }

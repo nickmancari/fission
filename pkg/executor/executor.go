@@ -337,13 +337,13 @@ func StartExecutor(logger *zap.Logger, functionNamespace string, envBuilderNames
 	cms := cms.MakeConfigSecretController(logger, fissionClient, kubernetesClient, executorTypes, &configmapInformer, &secretInformer)
 
 	ctx := context.Background()
-	api, err := MakeExecutor(ctx, logger, cms, fissionClient, executorTypes, []k8sCache.SharedIndexInformer{
-		funcInformer, pkgInformer, envInformer, configmapInformer, secretInformer,
-	})
+	api, err := MakeExecutor(ctx, logger, cms, fissionClient, executorTypes,
+		[]k8sCache.SharedIndexInformer{
+			funcInformer, pkgInformer, envInformer, configmapInformer, secretInformer,
+		})
 	if err != nil {
 		return err
 	}
-
 	go reaper.CleanupRoleBindings(logger, kubernetesClient, fissionClient, functionNamespace, envBuilderNamespace, time.Minute*30)
 	go api.Serve(port)
 	go serveMetric(logger)

@@ -152,14 +152,13 @@ func MakeGenericPoolManager(
 
 func (gpm *GenericPoolManager) Run(ctx context.Context) {
 	go gpm.service()
+	gpm.specializedPodC.Run(gpm)
 	// Run poolPodController
 	gpm.poolPodC.Run(gpm)
-	gpm.specializedPodC.Run()
 	// eagerPoolCreator must run after CleanupOldExecutorObjects.
 	// Otherwise, the poolmanager may wrongly delete the deployment.
 	// go gpm.eagerPoolCreator()
 	go gpm.podInformer.Run(ctx.Done())
-	go (*gpm.poolPodC.envInformer).Run(ctx.Done())
 	go gpm.WebsocketStartEventChecker(gpm.kubernetesClient)
 	go gpm.NoActiveConnectionEventChecker(gpm.kubernetesClient)
 	go gpm.idleObjectReaper()
